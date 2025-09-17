@@ -9,6 +9,7 @@
 (define-constant ERR_NO_BIDS u108)
 (define-constant ERR_ALREADY_FINALIZED u109)
 (define-constant ERR_NOT_ENDED u110)
+(define-constant ERR_RESERVE_NOT_MET u111)
 
 (define-data-var auction-counter uint u0)
 
@@ -19,6 +20,7 @@
     item-name: (string-ascii 64),
     description: (string-ascii 256),
     starting-bid: uint,
+    reserve-price: uint,
     current-bid: uint,
     highest-bidder: (optional principal),
     end-block: uint,
@@ -41,11 +43,13 @@
 (define-public (create-auction (item-name (string-ascii 64)) 
                               (description (string-ascii 256))
                               (starting-bid uint)
+                              (reserve-price uint)
                               (duration uint))
   (let ((auction-id (get-next-auction-id))
         (end-block (+ stacks-block-height duration)))
     (asserts! (> duration u0) (err ERR_INVALID_DURATION))
     (asserts! (> starting-bid u0) (err ERR_INVALID_STARTING_BID))
+    (asserts! (>= reserve-price starting-bid) (err ERR_INVALID_STARTING_BID))
     (map-set auctions
       { auction-id: auction-id }
       {
@@ -53,6 +57,7 @@
         item-name: item-name,
         description: description,
         starting-bid: starting-bid,
+        reserve-price: reserve-price,
         current-bid: starting-bid,
         highest-bidder: none,
         end-block: end-block,
@@ -108,13 +113,21 @@
               (err ERR_ALREADY_FINALIZED))
     
     (match (get highest-bidder auction-data)
-      winner (begin
-        (try! (as-contract (stx-transfer? (get current-bid auction-data) 
-                                        tx-sender (get seller auction-data))))
-        (map-set auctions
-          { auction-id: auction-id }
-          (merge auction-data { finalized: true }))
-        (ok winner))
+      winner (if (>= (get current-bid auction-data) (get reserve-price auction-data))
+        (begin
+          (try! (as-contract (stx-transfer? (get current-bid auction-data) 
+                                          tx-sender (get seller auction-data))))
+          (map-set auctions
+            { auction-id: auction-id }
+            (merge auction-data { finalized: true }))
+          (ok winner))
+        (begin
+          (try! (as-contract (stx-transfer? (get current-bid auction-data) 
+                                          tx-sender winner)))
+          (map-set auctions
+            { auction-id: auction-id }
+            (merge auction-data { finalized: true }))
+          (err ERR_RESERVE_NOT_MET)))
       (err ERR_NO_BIDS))))
 
 (define-public (emergency-end-auction (auction-id uint))
@@ -183,4 +196,9 @@
       amount: (get current-bid auction-data),
       bidder: (get highest-bidder auction-data)
     })
+    (err ERR_AUCTION_NOT_FOUND)))
+
+(define-read-only (reserve-price-met (auction-id uint))
+  (match (map-get? auctions { auction-id: auction-id })
+    auction-data (ok (>= (get current-bid auction-data) (get reserve-price auction-data)))
     (err ERR_AUCTION_NOT_FOUND)))

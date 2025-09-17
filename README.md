@@ -4,11 +4,12 @@ A blockchain-based auction platform built with Clarity smart contracts on Stacks
 
 ## ✨ Features
 
-- 🏷️ **Create Auctions**: Set up auctions with custom items, descriptions, starting bids, and durations
+- 🏷️ **Create Auctions**: Set up auctions with custom items, descriptions, starting bids, reserve prices, and durations
 - 💰 **Place Bids**: Bid on active auctions with automatic outbid handling
 - ⏰ **Time-Based Logic**: Auctions automatically end after specified block duration
 - 🔄 **Automatic Refunds**: Previous bidders are automatically refunded when outbid
-- 🏆 **Winner Selection**: Highest bidder wins when auction ends
+- 🏆 **Winner Selection**: Highest bidder wins when auction ends (if reserve price is met)
+- 💎 **Reserve Price Protection**: Sellers can set minimum acceptable prices for their items
 - 🛡️ **Security Features**: Prevents self-bidding and invalid operations
 - 🚨 **Emergency Controls**: Sellers can emergency-end their auctions
 
@@ -34,8 +35,9 @@ clarinet check
 (contract-call? .decentralized-auction-platform create-auction 
   "Vintage Guitar" 
   "1965 Fender Stratocaster in excellent condition"
-  u1000000  ;; 1 STX starting bid
-  u1000)    ;; 1000 blocks duration
+  u1000000   ;; 1 STX starting bid
+  u2500000   ;; 2.5 STX reserve price (minimum to win)
+  u1000)     ;; 1000 blocks duration
 ```
 
 ### Placing a Bid
@@ -74,16 +76,22 @@ clarinet check
 (contract-call? .decentralized-auction-platform get-winning-bid u1)
 ```
 
+### Check Reserve Price Status
+```clarity
+(contract-call? .decentralized-auction-platform reserve-price-met u1)
+```
+
 ## ⚡ Key Functions
 
 | Function | Description | Parameters |
 |----------|-------------|------------|
-| `create-auction` | Create a new auction | item-name, description, starting-bid, duration |
+| `create-auction` | Create a new auction | item-name, description, starting-bid, reserve-price, duration |
 | `place-bid` | Place a bid on active auction | auction-id, bid-amount |
 | `finalize-auction` | End auction and transfer funds | auction-id |
 | `emergency-end-auction` | Seller emergency stop | auction-id |
 | `get-auction-details` | View auction information | auction-id |
 | `get-auction-status` | Check if auction is active | auction-id |
+| `reserve-price-met` | Check if current bid meets reserve | auction-id |
 
 ## 🏗️ Contract Architecture
 
@@ -95,7 +103,9 @@ clarinet check
 
 ### Key Features
 
+- **Reserve Price Logic**: Auctions only succeed if final bid meets minimum price
 - **Automatic Refunds**: Previous highest bidders are instantly refunded
+- **Smart Finalization**: Winners only pay if reserve is met, otherwise refunded
 - **Time Validation**: Bids rejected after auction end block
 - **Anti-Manipulation**: Prevents sellers from bidding on own auctions
 - **State Management**: Tracks auction lifecycle and finalization
@@ -134,6 +144,7 @@ clarinet test tests/auction_test.ts
 | u108 | No bids placed |
 | u109 | Already finalized |
 | u110 | Auction not ended |
+| u111 | Reserve price not met |
 
 ## 🔮 Future Enhancements
 
