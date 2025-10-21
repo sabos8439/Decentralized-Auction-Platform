@@ -10,8 +10,34 @@
 (define-constant ERR_ALREADY_FINALIZED u109)
 (define-constant ERR_NOT_ENDED u110)
 (define-constant ERR_RESERVE_NOT_MET u111)
+(define-constant ERR_INVALID_OFFSET u112)
 
 (define-data-var auction-counter uint u0)
+(define-data-var bid-history-counter uint u0)
+
+(define-map bid-history
+  { history-id: uint }
+  {
+    auction-id: uint,
+    bidder: principal,
+    bid-amount: uint,
+    block-height: uint,
+    timestamp: uint
+  })
+
+(define-map auction-analytics
+  { auction-id: uint }
+  {
+    total-bids: uint,
+    unique-bidders: uint,
+    highest-bid: uint,
+    lowest-bid: uint,
+    average-bid: uint
+  })
+
+(define-map bidder-participation
+  { auction-id: uint, bidder: principal }
+  { bid-count: uint })
 
 (define-map auctions
   { auction-id: uint }
@@ -39,6 +65,51 @@
   (let ((current-id (var-get auction-counter)))
     (var-set auction-counter (+ current-id u1))
     (+ current-id u1)))
+
+(define-private (get-next-history-id)
+  (let ((current-id (var-get bid-history-counter)))
+    (var-set bid-history-counter (+ current-id u1))
+    (+ current-id u1)))
+
+(define-private (record-bid-history (auction-id uint) (bidder principal) (bid-amount uint))
+  (let ((history-id (get-next-history-id))
+        (current-block stacks-block-height)
+        (timestamp current-block))
+    (map-set bid-history
+      { history-id: history-id }
+      {
+        auction-id: auction-id,
+        bidder: bidder,
+        bid-amount: bid-amount,
+        block-height: current-block,
+        timestamp: timestamp
+      })
+    history-id))
+
+(define-private (update-auction-analytics (auction-id uint) (bid-amount uint) (bidder principal))
+  (let ((current-analytics (map-get? auction-analytics { auction-id: auction-id }))
+        (bidder-bids (map-get? bidder-participation { auction-id: auction-id, bidder: bidder })))
+    (let ((total-bids (match current-analytics analytics (+ (get total-bids analytics) u1) u1))
+          (current-highest (match current-analytics analytics (get highest-bid analytics) bid-amount))
+          (current-lowest (match current-analytics analytics (get lowest-bid analytics) bid-amount))
+          (new-highest (if (> bid-amount current-highest) bid-amount current-highest))
+          (new-lowest (if (< bid-amount current-lowest) bid-amount current-lowest))
+          (new-average (/ (+ (match current-analytics analytics (* (get average-bid analytics) (get total-bids analytics)) u0) bid-amount) total-bids))
+          (bidder-count (match current-analytics analytics (get unique-bidders analytics) u0))
+          (new-bidder-count (if (is-none bidder-bids) (+ bidder-count u1) bidder-count))
+          (new-bidder-bid-count (match bidder-bids bid-rec (+ (get bid-count bid-rec) u1) u1)))
+      (map-set bidder-participation
+        { auction-id: auction-id, bidder: bidder }
+        { bid-count: new-bidder-bid-count })
+      (map-set auction-analytics
+        { auction-id: auction-id }
+        {
+          total-bids: total-bids,
+          unique-bidders: new-bidder-count,
+          highest-bid: new-highest,
+          lowest-bid: new-lowest,
+          average-bid: new-average
+        }))))
 
 (define-public (create-auction (item-name (string-ascii 64)) 
                               (description (string-ascii 256))
@@ -101,7 +172,10 @@
       (map-set user-bids
         { user: tx-sender, auction-id: auction-id }
         { amount: bid-amount })
-      
+
+      (record-bid-history auction-id tx-sender bid-amount)
+      (update-auction-analytics auction-id bid-amount tx-sender)
+
       (ok true))))
 
 (define-public (finalize-auction (auction-id uint))
@@ -202,3 +276,15 @@
   (match (map-get? auctions { auction-id: auction-id })
     auction-data (ok (>= (get current-bid auction-data) (get reserve-price auction-data)))
     (err ERR_AUCTION_NOT_FOUND)))
+
+(define-read-only (get-bid-history (history-id uint))
+  (map-get? bid-history { history-id: history-id }))
+
+(define-read-only (get-auction-analytics (auction-id uint))
+  (map-get? auction-analytics { auction-id: auction-id }))
+
+(define-read-only (get-bidder-participation (auction-id uint) (bidder principal))
+  (map-get? bidder-participation { auction-id: auction-id, bidder: bidder }))
+
+(define-read-only (get-total-bid-history-count)
+  (var-get bid-history-counter))
