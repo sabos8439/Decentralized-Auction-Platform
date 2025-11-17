@@ -12,6 +12,9 @@
 (define-constant ERR_RESERVE_NOT_MET u111)
 (define-constant ERR_INVALID_OFFSET u112)
 
+(define-constant EXTENSION_WINDOW u10)
+(define-constant EXTENSION_BLOCKS u10)
+
 (define-data-var auction-counter uint u0)
 (define-data-var bid-history-counter uint u0)
 
@@ -149,7 +152,9 @@
               (err ERR_ALREADY_FINALIZED))
     
     (let ((previous-bidder (get highest-bidder auction-data))
-          (previous-bid (get current-bid auction-data)))
+          (previous-bid (get current-bid auction-data))
+          (time-left (- (get end-block auction-data) stacks-block-height))
+          (extended-end (if (<= time-left EXTENSION_WINDOW) (+ (get end-block auction-data) EXTENSION_BLOCKS) (get end-block auction-data))))
       
       (try! (stx-transfer? bid-amount tx-sender (as-contract tx-sender)))
       
@@ -162,7 +167,8 @@
         { auction-id: auction-id }
         (merge auction-data {
           current-bid: bid-amount,
-          highest-bidder: (some tx-sender)
+          highest-bidder: (some tx-sender),
+          end-block: extended-end
         }))
       
       (map-set bids
