@@ -11,6 +11,7 @@
 (define-constant ERR_NOT_ENDED u110)
 (define-constant ERR_RESERVE_NOT_MET u111)
 (define-constant ERR_INVALID_OFFSET u112)
+(define-constant ERR_INVALID_BIN_PRICE u113)
 
 (define-constant EXTENSION_WINDOW u10)
 (define-constant EXTENSION_BLOCKS u10)
@@ -50,6 +51,7 @@
     description: (string-ascii 256),
     starting-bid: uint,
     reserve-price: uint,
+    buy-now-price: (optional uint),
     current-bid: uint,
     highest-bidder: (optional principal),
     end-block: uint,
@@ -118,12 +120,14 @@
                               (description (string-ascii 256))
                               (starting-bid uint)
                               (reserve-price uint)
+                              (buy-now-price (optional uint))
                               (duration uint))
   (let ((auction-id (get-next-auction-id))
         (end-block (+ stacks-block-height duration)))
     (asserts! (> duration u0) (err ERR_INVALID_DURATION))
     (asserts! (> starting-bid u0) (err ERR_INVALID_STARTING_BID))
     (asserts! (>= reserve-price starting-bid) (err ERR_INVALID_STARTING_BID))
+    (asserts! (match buy-now-price price (>= price starting-bid) true) (err ERR_INVALID_BIN_PRICE))
     (map-set auctions
       { auction-id: auction-id }
       {
@@ -132,6 +136,7 @@
         description: description,
         starting-bid: starting-bid,
         reserve-price: reserve-price,
+        buy-now-price: buy-now-price,
         current-bid: starting-bid,
         highest-bidder: none,
         end-block: end-block,
@@ -154,7 +159,8 @@
     (let ((previous-bidder (get highest-bidder auction-data))
           (previous-bid (get current-bid auction-data))
           (time-left (- (get end-block auction-data) stacks-block-height))
-          (extended-end (if (<= time-left EXTENSION_WINDOW) (+ (get end-block auction-data) EXTENSION_BLOCKS) (get end-block auction-data))))
+          (extended-end (if (<= time-left EXTENSION_WINDOW) (+ (get end-block auction-data) EXTENSION_BLOCKS) (get end-block auction-data)))
+          (is-buy-now (match (get buy-now-price auction-data) price (>= bid-amount price) false)))
       
       (try! (stx-transfer? bid-amount tx-sender (as-contract tx-sender)))
       
@@ -163,13 +169,24 @@
                                                tx-sender bidder)))
         true)
       
-      (map-set auctions
-        { auction-id: auction-id }
-        (merge auction-data {
-          current-bid: bid-amount,
-          highest-bidder: (some tx-sender),
-          end-block: extended-end
-        }))
+      (if is-buy-now
+        (begin
+          (try! (as-contract (stx-transfer? bid-amount tx-sender (get seller auction-data))))
+          (map-set auctions
+            { auction-id: auction-id }
+            (merge auction-data {
+              current-bid: bid-amount,
+              highest-bidder: (some tx-sender),
+              end-block: stacks-block-height,
+              finalized: true
+            })))
+        (map-set auctions
+          { auction-id: auction-id }
+          (merge auction-data {
+            current-bid: bid-amount,
+            highest-bidder: (some tx-sender),
+            end-block: extended-end
+          })))
       
       (map-set bids
         { auction-id: auction-id, bidder: tx-sender }
