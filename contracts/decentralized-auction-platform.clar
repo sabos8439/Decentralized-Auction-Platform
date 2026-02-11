@@ -12,6 +12,7 @@
 (define-constant ERR_RESERVE_NOT_MET u111)
 (define-constant ERR_INVALID_OFFSET u112)
 (define-constant ERR_INVALID_BIN_PRICE u113)
+(define-constant MIN_BID_INCREMENT_PERCENT u5)
 
 (define-constant EXTENSION_WINDOW u10)
 (define-constant EXTENSION_BLOCKS u10)
@@ -160,8 +161,13 @@
           (previous-bid (get current-bid auction-data))
           (time-left (- (get end-block auction-data) stacks-block-height))
           (extended-end (if (<= time-left EXTENSION_WINDOW) (+ (get end-block auction-data) EXTENSION_BLOCKS) (get end-block auction-data)))
-          (is-buy-now (match (get buy-now-price auction-data) price (>= bid-amount price) false)))
+          (is-buy-now (match (get buy-now-price auction-data) price (>= bid-amount price) false))
+          (increment (if (is-some (get highest-bidder auction-data))
+                       (/ (* (get current-bid auction-data) MIN_BID_INCREMENT_PERCENT) u100)
+                       u0)))
       
+      (asserts! (>= bid-amount (+ (get current-bid auction-data) increment)) (err ERR_BID_TOO_LOW))
+
       (try! (stx-transfer? bid-amount tx-sender (as-contract tx-sender)))
       
       (match previous-bidder
